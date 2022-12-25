@@ -273,7 +273,7 @@ NEWLINE = "\n\033[K"
 
 def render_state(program: Program, state: State) -> str:
 
-    out: str = "\033[1mFunge Space:\033[0m" + NEWLINE
+    out: str = "\033[1mFunge Space:\033[0m\n"
     special: dict[Point, int] = {}
 
     padded_width = program.width + 1  # include newline!
@@ -314,7 +314,7 @@ def render_state(program: Program, state: State) -> str:
                         out += Color.IGNORE
 
             out += symbol + "\033[0m"
-        out += NEWLINE
+        out += "\n"
 
     out += "\033[1mNon-Printable Values:\033[0m" + NEWLINE
     if special:
