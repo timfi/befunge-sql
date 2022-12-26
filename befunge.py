@@ -10,7 +10,6 @@ import typer
 import psycopg
 import psycopg.sql
 import psycopg.rows
-from psycopg.abc import Buffer
 from psycopg.adapt import Loader
 
 SETUP = r"""
@@ -228,7 +227,7 @@ class Point:
     y: int
 
     class Loader(Loader):
-        def load(self, data: Buffer) -> Point:
+        def load(self, data: bytes) -> Point:
             return Point(*map(int, data.decode("utf-8")[1:-1].split(",", maxsplit=2)))
 
 
@@ -253,36 +252,34 @@ def sec_buffer(enable: bool):
             print("\033[?1049l\033[23;0;0t", end="")
 
 
-class Color(Enum):
-    PROGRAM_COUNTER = "\033[38;2;85;180;212m"
-    BRANCHING = "\033[38;2;250;141;62m"
-    ARITHMETIC = "\033[38;2;237;147;102m"
-    STACK_CONTROL = "\033[38;2;163;122;204m"
-    USER_IO = "\033[38;2;76;191;153m"
-    GRID_IO = "\033[38;2;134;179;0m"
-    STRING_MODE = "\033[38;2;255;115;131m"
-    TERMINATE = "\033[38;2;230;80;80m"
-    NUMBER = "\033[38;2;92;97;102m"
-    IGNORE = "\033[38;2;120;123;128m"
+class Style(Enum):
+    PROGRAM_COUNTER = "36;2"
+    BRANCHING = "36;1"
+    ARITHMETIC = "34"
+    STACK_CONTROL = "33"
+    USER_IO = "35"
+    GRID_IO = "32"
+    STRING_MODE = "31"
+    TERMINATE = "31;1"
+    NUMBER = "3"
+    IGNORE = "2"
+    BACKGROUND = ""
 
     def __radd__(self, other: str) -> str:
         return other + self.value
 
+CLEAR_LINE = "\033[K"
 
-NEWLINE = "\n\033[K"
-
-def render_state(program: Program, state: State) -> str:
-
-    out: str = "\033[1mFunge Space:\033[0m\n"
+def render_state(program: Program, state: State, colors: dict[Style, str]) -> str:
+    out: str = ""
     special: dict[Point, int] = {}
-
     padded_width = program.width + 1  # include newline!
 
     for y in range(program.height):
         for x in range(program.width):
             idx = y * padded_width + x
             symbol = state.grid[idx]
-            out += "\033[48;2;243;244;245m"
+            out += "\033[" + colors.get(Style.BACKGROUND, Style.BACKGROUND) + "m"
 
             if 32 > ord(symbol) or ord(symbol) > 126:
                 special[Point(x, y)] = ord(symbol)
@@ -291,53 +288,58 @@ def render_state(program: Program, state: State) -> str:
             if x == state.pos.x - 1 and y == state.pos.y - 1:
                 out += "\033[5;7;90m"
             else:
+                style: Style
+
                 match symbol:
                     case "<" | ">" | "^" | "v" | "#":
-                        out += Color.PROGRAM_COUNTER
+                        style = Style.PROGRAM_COUNTER
                     case "|" | "_" | "?":
-                        out += Color.BRANCHING
+                        style = Style.BRANCHING
                     case "+" | "-" | "*" | "/" | "%" | "!" | "`":
-                        out += Color.ARITHMETIC
+                        style = Style.ARITHMETIC
                     case ":" | "\\" | "$":
-                        out += Color.STACK_CONTROL
+                        style = Style.STACK_CONTROL
                     case "." | "," | "~" | "&":
-                        out += Color.USER_IO
+                        style = Style.USER_IO
                     case "g" | "p":
-                        out += Color.GRID_IO
+                        style = Style.GRID_IO
                     case '"':
-                        out += Color.STRING_MODE
+                        style = Style.STRING_MODE
                     case "@":
-                        out += Color.TERMINATE
-                    case symbol if symbol.isdigit():
-                        out += Color.NUMBER
+                        style = Style.TERMINATE
                     case _:
-                        out += Color.IGNORE
+                        if symbol.isdigit():
+                            style = Style.NUMBER
+                        else:
+                            style = Style.IGNORE
+
+                out += "\033[" + colors.get(style, style) + "m"
 
             out += symbol + "\033[0m"
         out += "\n"
 
-    out += "\033[1mNon-Printable Values:\033[0m" + NEWLINE
+    out += "\033[1mNon-Printable Values:\033[0m\n"
     if special:
-        out += NEWLINE.join(
-            f"({pos.x: >2d},{pos.y: >2d}) \033[2m:\033[0m {val:_>4d}"
+        out += "\n".join(
+            f"({pos.x: >2d},{pos.y: >2d}) \033[2m:\033[0m {val:_>4d}" + CLEAR_LINE
             for pos, val in special.items()
         )
     else:
         out += "\033[2m...\033[0m"
 
-    out += NEWLINE + f"\033[1mStack\033[0m:" + NEWLINE
+    out += f"\n\033[1mStack\033[0m:{CLEAR_LINE}\n"
     if state.stack:
-        out += "\033[2m | \033[0m".join(f"{entry:_>4d}" for entry in state.stack)
+        out += "\033[2m | \033[0m".join(f"{entry:_>4d}" for entry in state.stack) + CLEAR_LINE
     else:
-        out += "\033[2m∅\033[0m"
+        out += "\033[2m∅\033[0m" + CLEAR_LINE
 
-    out += NEWLINE + f"\033[1mOutput\033[0m:" + NEWLINE
+    out += f"\n\033[1mOutput\033[0m:{CLEAR_LINE}\n"
     if state.outp:
-        out += state.outp.replace("\n", NEWLINE)
+        out += state.outp.replace("\n",  CLEAR_LINE + "\n") + CLEAR_LINE
     else:
-        out += "\033[2m...\033[0m"
+        out += "\033[2m...\033[0m" + CLEAR_LINE
 
-    return out + NEWLINE
+    return out
 
 
 app = typer.Typer()
@@ -346,12 +348,19 @@ app = typer.Typer()
 @app.command()
 def run(
     program_file: typer.FileBinaryRead,
-    authstr: str = "",
-    step: bool = True,
-    step_time: float = 0.025
+    authstr: str = typer.Option("", help="Database authentication string."),
+    step: bool = typer.Option(True, help="Enable/disable stepper."),
+    step_fraction: int = typer.Option(32, help="Fraction of minimal step duration."),
+    color_file: typer.FileBinaryRead = typer.Option(None, help="Colors for syntax highlighting.")
 ):
+    colors: dict[Style, str] = (
+      {Style[key]: value for key, value in tomllib.load(color_file).items()}
+      if color_file is not None else
+      {}
+    )
     program = Program(**tomllib.load(program_file))
     output: str = ""
+    step_time = 1 / step_fraction
     with psycopg.connect(authstr) as conn:
         conn.adapters.register_loader("point", Point.Loader)
         with conn.cursor() as cur:
@@ -364,12 +373,12 @@ def run(
             with conn.cursor(row_factory=psycopg.rows.class_row(State)) as cur, sec_buffer(
                 step
             ):
-                skip: int = 0#
+                skip: int = 0
                 last_update: float = time()
                 for state in cur.stream(psycopg.sql.SQL(RUNTIME).format(**asdict(program))):
                     skip = max(0, skip-1)
                     if step:
-                        stdout.write("\033[H" + render_state(program, state) + NEWLINE)
+                        stdout.write("\033[H" + render_state(program, state, colors) + "\n")
                         if skip == 0:
                             stdout.write("\033[2;3mNumber of steps [default: 1]:\033[0m\033[?25h\033[J")
                             stdout.flush()
