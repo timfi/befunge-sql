@@ -1,10 +1,11 @@
 source = '''
-222p882**1+11p>133p                   > 33g1+33p 22g33g-v>22g33g%#v_v
- o                                                      >|
-  2                              v,,,, ,,,,.g22"is prime"<
-   1                             >   v^                           <
-              ^_@#-g11g22p22+1g22,*25<,,,,,,,,,,,,.g22"is not prime"<
+211p&01p>121p          >21g1+21p 11g21g-v>11g21g%#v_v
+                                        >|
+                 v,,,,, ,,,.g11"is prime"<
+>       ^        >   v ^                          <
+^_@#-g10p11:+1g11,*25<,,,,,,,,,,,,.g11"is not prime"<
 '''
-limit = 100000
-width = 69
+width = 53
 height = 5
+input = ['25']
+name = "Calculating Prime Numbers"

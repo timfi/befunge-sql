@@ -5,7 +5,6 @@ DROP FUNCTION IF EXISTS to_str(int) CASCADE;
 DROP FUNCTION IF EXISTS from_str(text) CASCADE;
 DROP FUNCTION IF EXISTS wrap(int, int) CASCADE;
 DROP TYPE IF EXISTS _ret CASCADE;
-DROP TYPE IF EXISTS _state CASCADE;
 DROP TYPE IF EXISTS direction CASCADE;
 DROP TYPE IF EXISTS execution_mode CASCADE;
 
@@ -15,7 +14,7 @@ CREATE TYPE direction AS ENUM
 
 
 CREATE TYPE execution_mode AS ENUM
-  ('⚙️', '➡️', '🏁', '🧵');
+  ('⚙️', '🏃', '🏁', '🧵', '🚀');
 
 
 CREATE TYPE _ret AS (
@@ -25,20 +24,6 @@ CREATE TYPE _ret AS (
   grid  text,
   inp   text,
   outp  text);
-
-
-CREATE TYPE _state AS (
-  ex   execution_mode,
-  nex  execution_mode,
-  dt   int,
-  grid int[][],
-  inp  text[],
-  outp text,
-  d    direction,
-  sl   int,
-  x    int,
-  y    int,
-  S    int[]);
 
 
 CREATE FUNCTION wrap(i int, e int) RETURNS int AS $$
@@ -87,7 +72,7 @@ CREATE FUNCTION from_str(c text) RETURNS int AS $$
 $$ LANGUAGE SQL IMMUTABLE;
 
 
-CREATE FUNCTION befunge(src text, inp text[] = '{}'::text[], width int = 80, height int = 25, lim int = 100000) RETURNS SETOF _ret AS $$
+CREATE FUNCTION befunge(src text, inp text[] = '{}'::text[], width int = 80, height int = 25) RETURNS SETOF _ret AS $$
   WITH RECURSIVE
     -- preprocess takes the input program/playfield string and…
     --  1. ensures the correct dimensions
@@ -116,76 +101,164 @@ CREATE FUNCTION befunge(src text, inp text[] = '{}'::text[], width int = 80, hei
         GROUP BY y) AS __(y, r)),
 
     step(ex, nex, dt, grid, inp, outp, d, sl, x, y, S) AS (
-      SELECT (
-        SELECT ('⚙️', null, 0, grid, befunge.inp, '', '🡺', 1, 1, 1, array[] :: int[]) :: _state
-        FROM   preprocess′ AS _(grid)
-      ).*
+      SELECT '🚀' :: execution_mode,
+             null :: execution_mode,
+             0,
+             grid,
+             befunge.inp,
+             '',
+             '🡺' :: direction,
+             1,
+             1,
+             1,
+             array[] :: int[]
+      FROM   preprocess′ AS _(grid)
         UNION
-      SELECT (
-        -- Two step evaultion for each step:
-        -- 1. handle current cell
-        -- 2. move to next cell
-        CASE s.ex
-          WHEN '⚙️' THEN
-            CASE c
-              -- Terminate
-              WHEN '@'  THEN ('🏁', null, s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, s.S) :: _state
-              -- Cursor
-              WHEN '>'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, '🡺', 1, s.x, s.y, s.S) :: _state
-              WHEN 'v'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, '🡻', 1, s.x, s.y, s.S) :: _state
-              WHEN '<'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, '🡸', 1, s.x, s.y, s.S) :: _state
-              WHEN '^'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, '🡹', 1, s.x, s.y, s.S) :: _state
-              WHEN '?'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, (array['🡺', '🡻', '🡸', '🡹'])[round(1 + random() * 3)], 1, s.x, s.y, s.S) :: _state
-              WHEN '#'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 2, s.x, s.y, s.S) :: _state
-              -- Arithmetic/Compare
-              WHEN '+'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, (coalesce(s.S[2], 0) + coalesce(s.S[1], 0))        || s.S[3:]) :: _state
-              WHEN '-'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, (coalesce(s.S[2], 0) - coalesce(s.S[1], 0))        || s.S[3:]) :: _state
-              WHEN '*'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, (coalesce(s.S[2], 0) * coalesce(s.S[1], 0))        || s.S[3:]) :: _state
-              WHEN '/'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, (coalesce(s.S[2], 0) / coalesce(s.S[1], 0))        || s.S[3:]) :: _state
-              WHEN '%'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, (coalesce(s.S[2], 0) % coalesce(s.S[1], 0))        || s.S[3:]) :: _state
-              WHEN '!'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, (coalesce(s.S[1], 0) = 0                  ) :: int || s.S[2:]) :: _state
-              WHEN '`'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, (coalesce(s.S[2], 0) > coalesce(s.S[1], 0)) :: int || s.S[3:]) :: _state
-              -- IO
-              WHEN '.'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp    , s.outp || coalesce(s.S[1], 0) :: text || ' ', s.d, s.sl, s.x, s.y, s.S[2:]                  ) :: _state
-              WHEN ','  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp    , s.outp || to_str(coalesce(s.S[1], 0))       , s.d, s.sl, s.x, s.y, s.S[2:]                  ) :: _state
-              WHEN '&'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp[2:], s.outp                                      , s.d, s.sl, s.x, s.y, s.inp[1] :: int    || s.S) :: _state
-              WHEN '~'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp[2:], s.outp                                      , s.d, s.sl, s.x, s.y, from_str(s.inp[1]) || s.S) :: _state
-              -- Stack
-              WHEN '$'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, s.sl, s.x, s.y, s.S[2:]) :: _state
-              WHEN ':'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, s.sl, s.x, s.y, coalesce(s.S[1], 0) || s.S) :: _state
-              WHEN E'\\'THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, s.sl, s.x, s.y, array[coalesce(s.S[2], 0), coalesce(s.S[1], 0)] || s.S[3:]) :: _state
-              -- Grid
-              WHEN 'g'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, s.sl, s.x, s.y, get(s.grid, s.S[1], s.S[2]) || s.S[3:]) :: _state
-              WHEN 'p'  THEN ('➡️', '⚙️', s.dt, put(s.grid, s.S[1], s.S[2], s.S[3]), s.inp, s.outp, s.d, s.sl, s.x, s.y,  s.S[4:]) :: _state
-              -- Conditional
-              WHEN '_'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, (array['🡸','🡺'])[1+(coalesce(s.S[1], 0)=0)::int], s.sl, s.x, s.y, s.S[2:]) :: _state
-              WHEN '|'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, (array['🡹','🡻'])[1+(coalesce(s.S[1], 0)=0)::int], s.sl, s.x, s.y, s.S[2:]) :: _state
-              -- Literal
-              WHEN '"'  THEN ('➡️', '🧵', s.dt, s.grid, s.inp, s.outp, s.d, s.sl, s.x, s.y, s.S) :: _state
-              ELSE CASE
-                WHEN c BETWEEN '0' AND '9'
-                        THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, s.sl, s.x, s.y, c :: int || s.S) :: _state
-                        ELSE ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, s.sl, s.x, s.y, s.S) :: _state
-              END
-            END
-          WHEN '🧵' THEN
-            CASE c
-              WHEN '"'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y,                s.S) :: _state
-                        ELSE ('➡️', '🧵', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, from_str(c) || s.S) :: _state
-            END
-          WHEN '➡️' THEN
-            CASE s.d
-              WHEN '🡺' THEN (s.nex, null, s.dt + 1, s.grid, s.inp, s.outp, s.d, 1, wrap(s.x + s.sl, w), s.y                , s.S) :: _state
-              WHEN '🡻' THEN (s.nex, null, s.dt + 1, s.grid, s.inp, s.outp, s.d, 1, s.x                , wrap(s.y + s.sl, h), s.S) :: _state
-              WHEN '🡸' THEN (s.nex, null, s.dt + 1, s.grid, s.inp, s.outp, s.d, 1, wrap(s.x - s.sl, w), s.y                , s.S) :: _state
-              WHEN '🡹' THEN (s.nex, null, s.dt + 1, s.grid, s.inp, s.outp, s.d, 1, s.x                , wrap(s.y - s.sl, h), s.S) :: _state
-            END
-        END
-      ).*
+      SELECT  "next".*
       FROM    step AS s,
       LATERAL (SELECT to_str(s.grid[s.y][s.x]),
                       befunge.width,
-                      befunge.height) AS _(c,w,h)
+                      befunge.height) AS _(c,w,h),
+      LATERAL (SELECT '⚙️' :: execution_mode, null :: execution_mode, s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, s.S
+               WHERE  s.ex = '🚀'
+                UNION
+               SELECT _.*
+               FROM   (SELECT '🏁' :: execution_mode, null :: execution_mode, s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, s.S
+                       WHERE  c = '@'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp, s.outp, '🡺', 1, s.x, s.y, s.S
+                       WHERE  c = '>'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp, s.outp, '🡻', 1, s.x, s.y, s.S
+                       WHERE  c = 'v'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp, s.outp, '🡸', 1, s.x, s.y, s.S
+                       WHERE  c = '<'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp, s.outp, '🡹', 1, s.x, s.y, s.S
+                       WHERE  c = '^'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp, s.outp, (array['🡺', '🡻', '🡸', '🡹'])[round(1 + random() * 3)] :: direction, 1, s.x, s.y, s.S
+                       WHERE  c = '?'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 2, s.x, s.y, s.S
+                       WHERE  c = '#'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp, s.outp, (array['🡸','🡺'])[1+(coalesce(s.S[1], 0)=0)::int] :: direction, s.sl, s.x, s.y, s.S[2:]
+                       WHERE  c = '_'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp, s.outp, (array['🡹','🡻'])[1+(coalesce(s.S[1], 0)=0)::int] :: direction, s.sl, s.x, s.y, s.S[2:]
+                       WHERE  c = '|'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, (coalesce(s.S[2], 0) + coalesce(s.S[1], 0))        || s.S[3:]
+                       WHERE  c = '+'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, (coalesce(s.S[2], 0) - coalesce(s.S[1], 0))        || s.S[3:]
+                       WHERE  c = '-'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, (coalesce(s.S[2], 0) * coalesce(s.S[1], 0))        || s.S[3:]
+                       WHERE  c = '*'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, (coalesce(s.S[2], 0) / coalesce(s.S[1], 0))        || s.S[3:]
+                       WHERE  c = '/'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, (coalesce(s.S[2], 0) % coalesce(s.S[1], 0))        || s.S[3:]
+                       WHERE  c = '%'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, (coalesce(s.S[1], 0) = 0                  ) :: int || s.S[2:]
+                       WHERE  c = '!'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, (coalesce(s.S[2], 0) > coalesce(s.S[1], 0)) :: int || s.S[3:]
+                       WHERE  c = '`'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp    , s.outp || coalesce(s.S[1], 0) :: text || ' ', s.d, s.sl, s.x, s.y, s.S[2:]
+                       WHERE  c = '.'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp    , s.outp || to_str(coalesce(s.S[1], 0))       , s.d, s.sl, s.x, s.y, s.S[2:]
+                       WHERE  c = ','
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp[2:], s.outp                                      , s.d, s.sl, s.x, s.y, s.inp[1] :: int    || s.S
+                       WHERE  c = '&'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp[2:], s.outp                                      , s.d, s.sl, s.x, s.y, from_str(s.inp[1]) || s.S
+                       WHERE  c = '~'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, s.sl, s.x, s.y, s.S[2:]
+                       WHERE  c = '$'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, s.sl, s.x, s.y, coalesce(s.S[1], 0) || s.S
+                       WHERE  c = ':'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, s.sl, s.x, s.y, array[coalesce(s.S[2], 0), coalesce(s.S[1], 0)] || s.S[3:]
+                       WHERE  c = '\'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, s.sl, s.x, s.y, get(s.grid, s.S[1], s.S[2]) || s.S[3:]
+                       WHERE  c = 'g'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, put(s.grid, s.S[1], s.S[2], s.S[3]), s.inp, s.outp, s.d, s.sl, s.x, s.y,  s.S[4:]
+                       WHERE  c = 'p'
+                        UNION
+                       SELECT '🏃', '🧵', s.dt, s.grid, s.inp, s.outp, s.d, s.sl, s.x, s.y, s.S
+                       WHERE  c = '"'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, s.sl, s.x, s.y, c :: int || s.S
+                       WHERE  c BETWEEN '0' AND '9'
+                        UNION
+                       SELECT '🏃', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, s.sl, s.x, s.y, s.S
+                       WHERE  c != '@'
+                       AND    c != '>'
+                       AND    c != 'v'
+                       AND    c != '<'
+                       AND    c != '^'
+                       AND    c != '?'
+                       AND    c != '#'
+                       AND    c != '_'
+                       AND    c != '|'
+                       AND    c != '+'
+                       AND    c != '-'
+                       AND    c != '*'
+                       AND    c != '/'
+                       AND    c != '%'
+                       AND    c != '!'
+                       AND    c != '`'
+                       AND    c != '.'
+                       AND    c != ','
+                       AND    c != '&'
+                       AND    c != '~'
+                       AND    c != '$'
+                       AND    c != ':'
+                       AND    c != '\'
+                       AND    c != 'g'
+                       AND    c != 'p'
+                       AND    c != '"'
+                       AND    NOT (c BETWEEN '0' AND '9')
+                      ) AS _
+               WHERE  s.ex = '⚙️'
+                UNION
+               SELECT '🏃', _.*
+               FROM   (SELECT '⚙️' :: execution_mode, s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y,                s.S
+                       WHERE  c = '"'
+                        UNION
+                       SELECT '🧵', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, from_str(c) || s.S
+                       WHERE  c != '"'
+                      ) AS _
+               WHERE s.ex = '🧵'
+                UNION
+               SELECT s.nex, null, s.dt + 1, s.grid, s.inp, s.outp, s.d, 1, _.*, s.S
+               FROM   (SELECT wrap(s.x + s.sl, w), s.y
+                       WHERE  s.d = '🡺'
+                        UNION
+                       SELECT s.x                , wrap(s.y + s.sl, h)
+                       WHERE  s.d = '🡻'
+                        UNION
+                       SELECT wrap(s.x - s.sl, w), s.y
+                       WHERE  s.d = '🡸'
+                        UNION
+                       SELECT s.x                , wrap(s.y - s.sl, h)
+                       WHERE  s.d = '🡹'
+                      ) AS _
+               WHERE s.ex = '🏃'
+              ) AS "next"
       WHERE  s.ex <> '🏁')
   SELECT (
     point(s.x, s.y), s.d, s.S,
@@ -193,6 +266,5 @@ CREATE FUNCTION befunge(src text, inp text[] = '{}'::text[], width int = 80, hei
      FROM   unnest(s.grid) WITH ORDINALITY AS _(c,i)),
     array_to_string(s.inp , ''), s.outp) :: _ret
   FROM   step AS s
-  WHERE  s.ex = '➡️'
-  LIMIT  befunge.lim;
+  WHERE  s.ex = '🏃';
 $$ LANGUAGE SQL IMMUTABLE;

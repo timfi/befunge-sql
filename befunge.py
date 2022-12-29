@@ -18,8 +18,6 @@ DROP FUNCTION IF EXISTS get(int[][], int, int) CASCADE;
 DROP FUNCTION IF EXISTS to_str(int) CASCADE;
 DROP FUNCTION IF EXISTS from_str(text) CASCADE;
 DROP FUNCTION IF EXISTS wrap(int, int) CASCADE;
-DROP TYPE IF EXISTS _ret CASCADE;
-DROP TYPE IF EXISTS _state CASCADE;
 DROP TYPE IF EXISTS direction CASCADE;
 DROP TYPE IF EXISTS execution_mode CASCADE;
 
@@ -29,30 +27,7 @@ CREATE TYPE direction AS ENUM
 
 
 CREATE TYPE execution_mode AS ENUM
-  ('⚙️', '➡️', '🏁', '🧵');
-
-
-CREATE TYPE _ret AS (
-  pos   point,
-  dir   direction,
-  stack int[],
-  grid  text,
-  inp   text,
-  outp  text);
-
-
-CREATE TYPE _state AS (
-  ex   execution_mode,
-  nex  execution_mode,
-  dt   int,
-  grid int[][],
-  inp  text[],
-  outp text,
-  d    direction,
-  sl   int,
-  x    int,
-  y    int,
-  S    int[]);
+  ('⚙️', '🏃', '🏁', '🪡', '🚀');
 
 
 CREATE FUNCTION wrap(i int, e int) RETURNS int AS $$
@@ -60,7 +35,6 @@ CREATE FUNCTION wrap(i int, e int) RETURNS int AS $$
 $$ LANGUAGE SQL IMMUTABLE;
 
 
--- Function to get a value form a 2D array
 CREATE FUNCTION get(grid int[][], _y int, _x int) RETURNS int AS $$
   SELECT grid[y][x]
   FROM   (
@@ -69,7 +43,6 @@ CREATE FUNCTION get(grid int[][], _y int, _x int) RETURNS int AS $$
 $$ LANGUAGE SQL IMMUTABLE;
 
 
--- Function to set a value in a 2D array
 CREATE FUNCTION put(grid int[][], _y int, _x int, _v int) RETURNS int[][] AS $$
   SELECT array_agg(r ORDER BY Y′)
   FROM   (
@@ -82,7 +55,6 @@ CREATE FUNCTION put(grid int[][], _y int, _x int, _v int) RETURNS int[][] AS $$
                generate_series(1,array_length(grid,2)) AS X′
       GROUP BY Y′) AS __(Y′, r);
 $$ LANGUAGE SQL IMMUTABLE;
-
 
 
 CREATE FUNCTION to_str(c int) RETURNS text AS $$
@@ -129,87 +101,141 @@ RUNTIME = r"""
                generate_series(1,{width})  AS x
         GROUP BY y) AS __(y, r)),
 
-    step(ex, nex, dt, grid, inp, outp, d, sl, x, y, S) AS (
-      SELECT (
-        SELECT ('⚙️', null, 0, grid, {input}, '', '🡺', 1, 1, 1, array[] :: int[]) :: _state
-        FROM   preprocess′ AS _(grid)
-      ).*
+    step("execution mode", "next execution mode", grid, input, output, direction, step_length, x, y, stack, steps) AS (
+      SELECT '🚀' :: execution_mode, '⚙️' :: execution_mode, grid, {input} :: text[], '', '🡺' :: direction, 1, 1, 1, array[] :: int[], 0
+      FROM   preprocess′ AS _(grid)
         UNION
-      SELECT (
-        -- Two step evaultion for each step:
-        -- 1. handle current cell
-        -- 2. move to next cell
-        CASE s.ex
-          WHEN '⚙️' THEN
-            CASE c
-              -- Terminate
-              WHEN '@'  THEN ('🏁', null, s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, s.S) :: _state
-              -- Cursor
-              WHEN '>'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, '🡺', 1, s.x, s.y, s.S) :: _state
-              WHEN 'v'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, '🡻', 1, s.x, s.y, s.S) :: _state
-              WHEN '<'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, '🡸', 1, s.x, s.y, s.S) :: _state
-              WHEN '^'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, '🡹', 1, s.x, s.y, s.S) :: _state
-              WHEN '?'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, (array['🡺', '🡻', '🡸', '🡹'])[round(1 + random() * 3)], 1, s.x, s.y, s.S) :: _state
-              WHEN '#'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 2, s.x, s.y, s.S) :: _state
-              -- Arithmetic/Compare
-              WHEN '+'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, (coalesce(s.S[2], 0) + coalesce(s.S[1], 0))        || s.S[3:]) :: _state
-              WHEN '-'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, (coalesce(s.S[2], 0) - coalesce(s.S[1], 0))        || s.S[3:]) :: _state
-              WHEN '*'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, (coalesce(s.S[2], 0) * coalesce(s.S[1], 0))        || s.S[3:]) :: _state
-              WHEN '/'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, (coalesce(s.S[2], 0) / coalesce(s.S[1], 0))        || s.S[3:]) :: _state
-              WHEN '%'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, (coalesce(s.S[2], 0) % coalesce(s.S[1], 0))        || s.S[3:]) :: _state
-              WHEN '!'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, (coalesce(s.S[1], 0) = 0                  ) :: int || s.S[2:]) :: _state
-              WHEN '`'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, (coalesce(s.S[2], 0) > coalesce(s.S[1], 0)) :: int || s.S[3:]) :: _state
-              -- IO
-              WHEN '.'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp    , s.outp || coalesce(s.S[1], 0) :: text || ' ', s.d, s.sl, s.x, s.y, s.S[2:]                  ) :: _state
-              WHEN ','  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp    , s.outp || to_str(coalesce(s.S[1], 0))       , s.d, s.sl, s.x, s.y, s.S[2:]                  ) :: _state
-              WHEN '&'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp[2:], s.outp                                      , s.d, s.sl, s.x, s.y, s.inp[1] :: int    || s.S) :: _state
-              WHEN '~'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp[2:], s.outp                                      , s.d, s.sl, s.x, s.y, from_str(s.inp[1]) || s.S) :: _state
-              -- Stack
-              WHEN '$'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, s.sl, s.x, s.y, s.S[2:]) :: _state
-              WHEN ':'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, s.sl, s.x, s.y, coalesce(s.S[1], 0) || s.S) :: _state
-              WHEN E'\\'THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, s.sl, s.x, s.y, array[coalesce(s.S[2], 0), coalesce(s.S[1], 0)] || s.S[3:]) :: _state
-              -- Grid
-              WHEN 'g'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, s.sl, s.x, s.y, get(s.grid, s.S[1], s.S[2]) || s.S[3:]) :: _state
-              WHEN 'p'  THEN ('➡️', '⚙️', s.dt, put(s.grid, s.S[1], s.S[2], s.S[3]), s.inp, s.outp, s.d, s.sl, s.x, s.y,  s.S[4:]) :: _state
-              -- Conditional
-              WHEN '_'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, (array['🡸','🡺'])[1+(coalesce(s.S[1], 0)=0)::int], s.sl, s.x, s.y, s.S[2:]) :: _state
-              WHEN '|'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, (array['🡹','🡻'])[1+(coalesce(s.S[1], 0)=0)::int], s.sl, s.x, s.y, s.S[2:]) :: _state
-              -- Literal
-              WHEN '"'  THEN ('➡️', '🧵', s.dt, s.grid, s.inp, s.outp, s.d, s.sl, s.x, s.y, s.S) :: _state
-              ELSE CASE
-                WHEN c BETWEEN '0' AND '9'
-                        THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, s.sl, s.x, s.y, c :: int || s.S) :: _state
-                        ELSE ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, s.sl, s.x, s.y, s.S) :: _state
-              END
-            END
-          WHEN '🧵' THEN
-            CASE c
-              WHEN '"'  THEN ('➡️', '⚙️', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y,                s.S) :: _state
-                        ELSE ('➡️', '🧵', s.dt, s.grid, s.inp, s.outp, s.d, 1, s.x, s.y, from_str(c) || s.S) :: _state
-            END
-          WHEN '➡️' THEN
-            CASE s.d
-              WHEN '🡺' THEN (s.nex, null, s.dt + 1, s.grid, s.inp, s.outp, s.d, 1, wrap(s.x + s.sl, w), s.y                , s.S) :: _state
-              WHEN '🡻' THEN (s.nex, null, s.dt + 1, s.grid, s.inp, s.outp, s.d, 1, s.x                , wrap(s.y + s.sl, h), s.S) :: _state
-              WHEN '🡸' THEN (s.nex, null, s.dt + 1, s.grid, s.inp, s.outp, s.d, 1, wrap(s.x - s.sl, w), s.y                , s.S) :: _state
-              WHEN '🡹' THEN (s.nex, null, s.dt + 1, s.grid, s.inp, s.outp, s.d, 1, s.x                , wrap(s.y - s.sl, h), s.S) :: _state
-            END
-        END
-      ).*
+      SELECT "next".*, s.steps + 1
       FROM    step AS s,
-      LATERAL (SELECT to_str(s.grid[s.y][s.x]),
-                      {width},
-                      {height}) AS _(c,w,h)
-      WHERE  s.ex <> '🏁')
-  SELECT point(s.x, s.y) AS pos,
-         s.d AS dir,
-         s.S as stack,
-    (SELECT string_agg(to_str(c) || (CASE WHEN i % {width} = 0 THEN E'\n' ELSE '' END), '')
-     FROM   unnest(s.grid) WITH ORDINALITY AS _(c,i)) AS grid,
-    array_to_string(s.inp , '') AS inp, s.outp AS outp
-  FROM   step AS s
-  WHERE  s.ex = '➡️'
-  LIMIT  {limit};
+      LATERAL (SELECT to_str(s.grid[s.y][s.x]), {width}, {height}) AS _(c,w,h),
+      LATERAL (
+        SELECT s."next execution mode" :: execution_mode, null, s.grid, s.input, s.output, s.direction, 1, s.x, s.y, s.stack
+        WHERE  s."execution mode" = '🚀'
+          UNION
+        SELECT _.*
+        FROM   (
+          SELECT '🏁' :: execution_mode, null :: execution_mode, s.grid, s.input, s.output, s.direction, 1, s.x, s.y, s.stack
+          WHERE  c = '@'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output, '🡺', 1, s.x, s.y, s.stack
+          WHERE  c = '>'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output, '🡻', 1, s.x, s.y, s.stack
+          WHERE  c = 'v'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output, '🡸', 1, s.x, s.y, s.stack
+          WHERE  c = '<'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output, '🡹', 1, s.x, s.y, s.stack
+          WHERE  c = '^'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output, (array['🡺', '🡻', '🡸', '🡹'])[round(1 + random() * 3)] :: direction, 1, s.x, s.y, s.stack
+          WHERE  c = '?'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, 2, s.x, s.y, s.stack
+          WHERE  c = '#'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output, (array['🡸','🡺'])[1+(coalesce(s.stack[1], 0)=0)::int] :: direction, s.step_length, s.x, s.y, s.stack[2:]
+          WHERE  c = '_'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output, (array['🡹','🡻'])[1+(coalesce(s.stack[1], 0)=0)::int] :: direction, s.step_length, s.x, s.y, s.stack[2:]
+          WHERE  c = '|'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, 1, s.x, s.y, (coalesce(s.stack[2], 0) + coalesce(s.stack[1], 0)) || s.stack[3:]
+          WHERE  c = '+'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, 1, s.x, s.y, (coalesce(s.stack[2], 0) - coalesce(s.stack[1], 0)) || s.stack[3:]
+          WHERE  c = '-'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, 1, s.x, s.y, (coalesce(s.stack[2], 0) * coalesce(s.stack[1], 0)) || s.stack[3:]
+          WHERE  c = '*'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, 1, s.x, s.y, (coalesce(s.stack[2], 0) / coalesce(s.stack[1], 0)) || s.stack[3:]
+          WHERE  c = '/'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, 1, s.x, s.y, (coalesce(s.stack[2], 0) % coalesce(s.stack[1], 0)) || s.stack[3:]
+          WHERE  c = '%'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, 1, s.x, s.y, (coalesce(s.stack[1], 0) = 0) :: int || s.stack[2:]
+          WHERE  c = '!'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, 1, s.x, s.y, (coalesce(s.stack[2], 0) > coalesce(s.stack[1], 0)) :: int || s.stack[3:]
+          WHERE  c = '`'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output || coalesce(s.stack[1], 0) :: text || ' ', s.direction, s.step_length, s.x, s.y, s.stack[2:]
+          WHERE  c = '.'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output || to_str(coalesce(s.stack[1], 0)), s.direction, s.step_length, s.x, s.y, s.stack[2:]
+          WHERE  c = ','
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input[2:], s.output, s.direction, s.step_length, s.x, s.y, s.input[1] :: int || s.stack
+          WHERE  c = '&'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input[2:], s.output, s.direction, s.step_length, s.x, s.y, from_str(s.input[1]) || s.stack
+          WHERE  c = '~'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, s.step_length, s.x, s.y, s.stack[2:]
+          WHERE  c = '$'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, s.step_length, s.x, s.y, coalesce(s.stack[1], 0) || s.stack
+          WHERE  c = ':'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, s.step_length, s.x, s.y, array[coalesce(s.stack[2], 0), coalesce(s.stack[1], 0)] || s.stack[3:]
+          WHERE  c = '\'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, s.step_length, s.x, s.y, get(s.grid, s.stack[1], s.stack[2]) || s.stack[3:]
+          WHERE  c = 'g'
+            UNION
+          SELECT '🏃', '⚙️', put(s.grid, s.stack[1], s.stack[2], s.stack[3]), s.input, s.output, s.direction, s.step_length, s.x, s.y,  s.stack[4:]
+          WHERE  c = 'p'
+            UNION
+          SELECT '🏃', '🪡', s.grid, s.input, s.output, s.direction, s.step_length, s.x, s.y, s.stack
+          WHERE  c = '"'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, s.step_length, s.x, s.y, c :: int || s.stack
+          WHERE  c BETWEEN '0' AND '9'
+            UNION
+          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, s.step_length, s.x, s.y, s.stack
+          WHERE  c != '@' AND c != '>' AND c != 'v' AND c != '<' AND c != '^' AND c != '?' AND c != '#'
+          AND    c != '_' AND c != '|' AND c != '+' AND c != '-' AND c != '*' AND c != '/' AND c != '%'
+          AND    c != '!' AND c != '`' AND c != '.' AND c != ',' AND c != '&' AND c != '~' AND c != '$'
+          AND    c != ':' AND c != '\' AND c != 'g' AND c != 'p' AND c != '"' AND NOT (c BETWEEN '0' AND '9')) AS _
+        WHERE  s."execution mode" = '⚙️'
+          UNION
+        SELECT '🏃', _.*
+        FROM   (
+          SELECT '⚙️' :: execution_mode, s.grid, s.input, s.output, s.direction, 1, s.x, s.y,s.stack
+          WHERE  c = '"'
+            UNION
+          SELECT '🪡', s.grid, s.input, s.output, s.direction, 1, s.x, s.y, from_str(c) || s.stack
+          WHERE  c != '"') AS _
+        WHERE s."execution mode" = '🪡'
+          UNION
+        SELECT s."next execution mode", null, s.grid, s.input, s.output, s.direction, 1, _.*, s.stack
+        FROM   (
+          SELECT wrap(s.x + s.step_length, w), s.y
+          WHERE  s.direction = '🡺'
+            UNION
+          SELECT s.x, wrap(s.y + s.step_length, h)
+          WHERE  s.direction = '🡻'
+            UNION
+          SELECT wrap(s.x - s.step_length, w), s.y
+          WHERE  s.direction = '🡸'
+            UNION
+          SELECT s.x, wrap(s.y - s.step_length, h)
+          WHERE  s.direction = '🡹') AS _
+        WHERE s."execution mode" = '🏃') AS "next"
+      WHERE  s."execution mode" <> '🏁')
+  SELECT s."execution mode" AS mode,
+         point(s.x, s.y) AS pos,
+         s.direction AS dir,
+         s.stack AS stack,
+         (SELECT string_agg(to_str(c) || (CASE WHEN i % {width} = 0 THEN E'\n' ELSE '' END), '')
+          FROM   unnest(s.grid) WITH ORDINALITY AS _(c,i)) AS grid,
+         array_to_string(s.input , '') AS input,
+         s.output AS output,
+         s.steps AS steps
+  FROM   step AS s;
 """
 
 @dataclass(frozen=True)
@@ -218,7 +244,7 @@ class Program:
     input: list[str] = field(default_factory=list)
     width: int = 80
     height: int = 25
-    limit: int = 100000
+    name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -233,12 +259,14 @@ class Point:
 
 @dataclass(frozen=True)
 class State:
+    mode: str
     pos: Point
     dir: str
     stack: list[int]
     grid: str
-    inp: str
-    outp: str
+    input: str
+    output: str
+    steps: int
 
 
 @contextmanager
@@ -264,6 +292,7 @@ class Style(Enum):
     NUMBER = "3"
     IGNORE = "2"
     BACKGROUND = ""
+    CURSOR = "5;7;90"
 
     def __radd__(self, other: str) -> str:
         return other + self.value
@@ -286,7 +315,7 @@ def render_state(program: Program, state: State, colors: dict[Style, str]) -> st
                 symbol = "▢"
 
             if x == state.pos.x - 1 and y == state.pos.y - 1:
-                out += "\033[5;7;90m"
+                out += "\033[" + colors.get(Style.CURSOR, Style.CURSOR) + "m"
             else:
                 style: Style
 
@@ -318,6 +347,10 @@ def render_state(program: Program, state: State, colors: dict[Style, str]) -> st
             out += symbol + "\033[0m"
         out += "\n"
 
+    out += f"\033[1mMode:\033[0m {state.mode}\n"
+    out += f"\033[1mDirection:\033[0m {state.dir}\n"
+    out += f"\033[1mSteps:\033[0m {state.steps}\n"
+
     out += "\033[1mNon-Printable Values:\033[0m\n"
     if special:
         out += "\n".join(
@@ -325,7 +358,7 @@ def render_state(program: Program, state: State, colors: dict[Style, str]) -> st
             for pos, val in special.items()
         )
     else:
-        out += "\033[2m...\033[0m"
+        out += "\033[2m...\033[0m" + CLEAR_LINE
 
     out += f"\n\033[1mStack\033[0m:{CLEAR_LINE}\n"
     if state.stack:
@@ -334,8 +367,8 @@ def render_state(program: Program, state: State, colors: dict[Style, str]) -> st
         out += "\033[2m∅\033[0m" + CLEAR_LINE
 
     out += f"\n\033[1mOutput\033[0m:{CLEAR_LINE}\n"
-    if state.outp:
-        out += state.outp.replace("\n",  CLEAR_LINE + "\n") + CLEAR_LINE
+    if state.output:
+        out += state.output.replace("\n",  CLEAR_LINE + "\n") + CLEAR_LINE
     else:
         out += "\033[2m...\033[0m" + CLEAR_LINE
 
@@ -349,7 +382,7 @@ app = typer.Typer()
 def run(
     program_file: typer.FileBinaryRead,
     authstr: str = typer.Option("", help="Database authentication string."),
-    step: bool = typer.Option(True, help="Enable/disable stepper."),
+    step: bool = typer.Option(False, help="Enable/disable stepper."),
     step_fraction: int = typer.Option(32, help="Fraction of minimal step duration."),
     color_file: typer.FileBinaryRead = typer.Option(None, help="Colors for syntax highlighting.")
 ):
@@ -360,6 +393,7 @@ def run(
     )
     program = Program(**tomllib.load(program_file))
     output: str = ""
+    steps: int = 0
     step_time = 1 / step_fraction
     with psycopg.connect(authstr) as conn:
         conn.adapters.register_loader("point", Point.Loader)
@@ -373,22 +407,31 @@ def run(
             with conn.cursor(row_factory=psycopg.rows.class_row(State)) as cur, sec_buffer(
                 step
             ):
+                if step:
+                    print(f"\33]0;befunge-sql: {program.name or program_file.name}\a", end='', flush=True)
                 skip: int = 0
                 last_update: float = time()
+                single_step: bool = True
                 for state in cur.stream(psycopg.sql.SQL(RUNTIME).format(**asdict(program))):
-                    skip = max(0, skip-1)
+
+                    output = state.output
+                    steps = state.steps
                     if step:
+                        skip = max(0, skip-1)
                         stdout.write("\033[H" + render_state(program, state, colors) + "\n")
                         if skip == 0:
+                            if not single_step:
+                                stdout.write("\a")
                             stdout.write("\033[2;3mNumber of steps [default: 1]:\033[0m\033[?25h\033[J")
                             stdout.flush()
                             skips = input()
                             stdout.write("\033[?25l")
                             stdout.flush()
                             try:
-                                skip = int(skips)
+                                skip = max(1, int(skips))
                             except ValueError:
-                                skip = 0
+                                skip = 1
+                            single_step = skip == 1
                         else:
                             stdout.write(f"\033[2;3mSteps left: \033[4m{skip}\033[0m\033[J")
                             stdout.flush()
@@ -396,12 +439,13 @@ def run(
                             if (diff := current_time - last_update) < step_time:
                                 sleep(step_time - diff)
                             last_update = time()
-                    output = state.outp
-            if output:
-                print(output)
         finally:
             stdout.write("\033[?25h")
             stdout.flush()
+    if output:
+        stdout.flush()
+        print(output)
+        print(f"({steps=})")
 
 
 if __name__ == "__main__":
