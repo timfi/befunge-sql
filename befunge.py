@@ -21,41 +21,50 @@ DROP FUNCTION IF EXISTS wrap(int, int) CASCADE;
 DROP TYPE IF EXISTS direction CASCADE;
 DROP TYPE IF EXISTS execution_mode CASCADE;
 
-
 CREATE TYPE direction AS ENUM
   ('🡺', '🡻', '🡸', '🡹');
 
-
 CREATE TYPE execution_mode AS ENUM
-  ('⚙️', '🏃', '🏁', '🪡', '🚀');
-
+  ('⚙️', '🪡', '🏁');
 
 CREATE FUNCTION wrap(i int, e int) RETURNS int AS $$
   SELECT 1 + (e + i - 1) % e;
 $$ LANGUAGE SQL IMMUTABLE;
 
-
 CREATE FUNCTION get(grid int[][], _y int, _x int) RETURNS int AS $$
   SELECT grid[y][x]
   FROM   (
-    SELECT wrap(coalesce(_y, 0)+1, array_length(grid, 1)),
-           wrap(coalesce(_x, 0)+1, array_length(grid, 2))) AS _(y, x);
+          SELECT wrap(
+                  coalesce(_y, 0) + 1,
+                  array_length(grid, 1)
+                 ),
+                 wrap(
+                  coalesce(_x, 0) + 1,
+                  array_length(grid, 2)
+                 )
+         ) AS _(y, x);
 $$ LANGUAGE SQL IMMUTABLE;
-
 
 CREATE FUNCTION put(grid int[][], _y int, _x int, _v int) RETURNS int[][] AS $$
   SELECT array_agg(r ORDER BY Y′)
   FROM   (
-    SELECT wrap(coalesce(_y, 0)+1, array_length(grid, 1)),
-           wrap(coalesce(_x, 0)+1, array_length(grid, 2)),
-           coalesce(_v, 0)                               ) AS _(y, x, v),
-  LATERAL (
-      SELECT   Y′, array_agg(CASE (X′,Y′) WHEN (x,y) THEN v ELSE grid[Y′][X′] END ORDER BY X′)
-      FROM     generate_series(1,array_length(grid,1)) AS Y′,
-               generate_series(1,array_length(grid,2)) AS X′
-      GROUP BY Y′) AS __(Y′, r);
+          SELECT wrap(
+                  coalesce(_y, 0) + 1,
+                  array_length(grid, 1)
+                 ),
+                 wrap(
+                  coalesce(_x, 0) + 1,
+                  array_length(grid, 2)
+                 ),
+                 coalesce(_v, 0)
+         ) AS _(y, x, v),
+        LATERAL (
+            SELECT Y′, array_agg(CASE (X′,Y′) WHEN (x,y) THEN v ELSE grid[Y′][X′] END ORDER BY X′)
+            FROM   generate_series(1,array_length(grid,1)) AS Y′,
+                   generate_series(1,array_length(grid,2)) AS X′
+            GROUP BY Y′
+        ) AS __(Y′, r);
 $$ LANGUAGE SQL IMMUTABLE;
-
 
 CREATE FUNCTION to_str(c int) RETURNS text AS $$
   SELECT CASE coalesce(c, 0)
@@ -63,7 +72,6 @@ CREATE FUNCTION to_str(c int) RETURNS text AS $$
            ELSE chr(c)
   END;
 $$ LANGUAGE SQL IMMUTABLE;
-
 
 CREATE FUNCTION from_str(c text) RETURNS int AS $$
   SELECT CASE coalesce(c, '␀')
@@ -75,167 +83,228 @@ $$ LANGUAGE SQL IMMUTABLE;
 
 RUNTIME = r"""
   WITH RECURSIVE
-    -- preprocess takes the input program/playfield string and…
-    --  1. ensures the correct dimensions
-    --  2. transform it in to a 2D array
-    preprocess(grid) AS (
-      SELECT (
-        (array_agg(
-          string_to_array(
-            rpad(l, {width}, ' '), NULL)
-          )
-        )[1:{height}][1:{width}])
-      FROM regexp_split_to_table(
-        {source} ||
-        repeat(
-          repeat(' ', {width}) || E'\n',
-          {height}),
-        '\n') WITH ORDINALITY AS l),
+    step(execution_mode, grid, input, output, stack, direction, x, y, steps) AS (
+      SELECT '⚙️' :: execution_mode,
+             grid,
+             {input} :: text[],
+             '' AS output,
+             array[] :: int[] AS stack,
+             '🡺' :: direction,
+             1 AS x,
+             1 AS y,
+             0 AS steps
+      FROM   (SELECT  array_agg(r ORDER BY y)
+              FROM    LATERAL (
+                        SELECT (array_agg(string_to_array(rpad(l, {width}, ' '), NULL)))[1:{height}][1:{width}]
+                        FROM   regexp_split_to_table(
+                                {source} ||
+                                repeat(repeat(' ', {width}) || E'\n', {height}),
+                                '\n'
+                               ) WITH ORDINALITY AS l
+                      ) AS _(grid),
+                      LATERAL (
+                        SELECT y, array_agg(from_str(grid[y][x]) ORDER BY x)
+                        FROM   generate_series(1,{height}) AS y,
+                               generate_series(1,{width})  AS x
+                        GROUP BY y
+                      ) AS __(y, r)
+             ) AS _(grid)
+        UNION ALL -- recursive UNION!
+      SELECT  next.execution_mode,
+              next.grid,
+              next.input,
+              next.output,
+              next.stack,
+              next.direction,
+              move.x,
+              move.y,
+              current.steps + 1
+      FROM    step AS current,
+              LATERAL (SELECT to_str(current.grid[current.y][current.x])) AS _(symbol),
+              -- Process
+              LATERAL (
+                -- Normal Mode
+                SELECT _.*
+                FROM   (
+                        -- Termination
+                        SELECT '🏁' :: execution_mode, current.grid, current.input, current.output, current.stack, current.direction, 0
+                        WHERE  symbol = '@'
+                          UNION ALL
 
-    preprocess′(grid) AS (
-      SELECT  array_agg(r ORDER BY y)
-      FROM    preprocess AS _(grid),
-      LATERAL (
-        SELECT y, array_agg(from_str(grid[y][x]) ORDER BY x)
-        FROM   generate_series(1,{height}) AS y,
-               generate_series(1,{width})  AS x
-        GROUP BY y) AS __(y, r)),
+                        -- Program Counter Control
+                        SELECT '⚙️', current.grid, current.input, current.output, current.stack, _.*
+                        FROM   (
+                                SELECT current.direction, 2
+                                WHERE  symbol = '#'
+                                  UNION ALL
+                                SELECT '🡺', 1
+                                WHERE  symbol = '>'
+                                  UNION ALL
+                                SELECT '🡻', 1
+                                WHERE  symbol = 'v'
+                                  UNION ALL
+                                SELECT '🡸', 1
+                                WHERE  symbol = '<'
+                                  UNION ALL
+                                SELECT '🡹', 1
+                                WHERE  symbol = '^'
+                               ) AS _(direction, step_length)
+                          UNION ALL
 
-    step("execution mode", "next execution mode", grid, input, output, direction, step_length, x, y, stack, steps) AS (
-      SELECT '🚀' :: execution_mode, '⚙️' :: execution_mode, grid, {input} :: text[], '', '🡺' :: direction, 1, 1, 1, array[] :: int[], 0
-      FROM   preprocess′ AS _(grid)
-        UNION
-      SELECT "next".*, s.steps + 1
-      FROM    step AS s,
-      LATERAL (SELECT to_str(s.grid[s.y][s.x]), {width}, {height}) AS _(c,w,h),
-      LATERAL (
-        SELECT s."next execution mode" :: execution_mode, null, s.grid, s.input, s.output, s.direction, 1, s.x, s.y, s.stack
-        WHERE  s."execution mode" = '🚀'
-          UNION
-        SELECT _.*
-        FROM   (
-          SELECT '🏁' :: execution_mode, null :: execution_mode, s.grid, s.input, s.output, s.direction, 1, s.x, s.y, s.stack
-          WHERE  c = '@'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output, '🡺', 1, s.x, s.y, s.stack
-          WHERE  c = '>'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output, '🡻', 1, s.x, s.y, s.stack
-          WHERE  c = 'v'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output, '🡸', 1, s.x, s.y, s.stack
-          WHERE  c = '<'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output, '🡹', 1, s.x, s.y, s.stack
-          WHERE  c = '^'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output, (array['🡺', '🡻', '🡸', '🡹'])[round(1 + random() * 3)] :: direction, 1, s.x, s.y, s.stack
-          WHERE  c = '?'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, 2, s.x, s.y, s.stack
-          WHERE  c = '#'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output, (array['🡸','🡺'])[1+(coalesce(s.stack[1], 0)=0)::int] :: direction, s.step_length, s.x, s.y, s.stack[2:]
-          WHERE  c = '_'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output, (array['🡹','🡻'])[1+(coalesce(s.stack[1], 0)=0)::int] :: direction, s.step_length, s.x, s.y, s.stack[2:]
-          WHERE  c = '|'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, 1, s.x, s.y, (coalesce(s.stack[2], 0) + coalesce(s.stack[1], 0)) || s.stack[3:]
-          WHERE  c = '+'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, 1, s.x, s.y, (coalesce(s.stack[2], 0) - coalesce(s.stack[1], 0)) || s.stack[3:]
-          WHERE  c = '-'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, 1, s.x, s.y, (coalesce(s.stack[2], 0) * coalesce(s.stack[1], 0)) || s.stack[3:]
-          WHERE  c = '*'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, 1, s.x, s.y, (coalesce(s.stack[2], 0) / coalesce(s.stack[1], 0)) || s.stack[3:]
-          WHERE  c = '/'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, 1, s.x, s.y, (coalesce(s.stack[2], 0) % coalesce(s.stack[1], 0)) || s.stack[3:]
-          WHERE  c = '%'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, 1, s.x, s.y, (coalesce(s.stack[1], 0) = 0) :: int || s.stack[2:]
-          WHERE  c = '!'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, 1, s.x, s.y, (coalesce(s.stack[2], 0) > coalesce(s.stack[1], 0)) :: int || s.stack[3:]
-          WHERE  c = '`'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output || coalesce(s.stack[1], 0) :: text || ' ', s.direction, s.step_length, s.x, s.y, s.stack[2:]
-          WHERE  c = '.'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output || to_str(coalesce(s.stack[1], 0)), s.direction, s.step_length, s.x, s.y, s.stack[2:]
-          WHERE  c = ','
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input[2:], s.output, s.direction, s.step_length, s.x, s.y, s.input[1] :: int || s.stack
-          WHERE  c = '&'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input[2:], s.output, s.direction, s.step_length, s.x, s.y, from_str(s.input[1]) || s.stack
-          WHERE  c = '~'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, s.step_length, s.x, s.y, s.stack[2:]
-          WHERE  c = '$'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, s.step_length, s.x, s.y, coalesce(s.stack[1], 0) || s.stack
-          WHERE  c = ':'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, s.step_length, s.x, s.y, array[coalesce(s.stack[2], 0), coalesce(s.stack[1], 0)] || s.stack[3:]
-          WHERE  c = '\'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, s.step_length, s.x, s.y, get(s.grid, s.stack[1], s.stack[2]) || s.stack[3:]
-          WHERE  c = 'g'
-            UNION
-          SELECT '🏃', '⚙️', put(s.grid, s.stack[1], s.stack[2], s.stack[3]), s.input, s.output, s.direction, s.step_length, s.x, s.y,  s.stack[4:]
-          WHERE  c = 'p'
-            UNION
-          SELECT '🏃', '🪡', s.grid, s.input, s.output, s.direction, s.step_length, s.x, s.y, s.stack
-          WHERE  c = '"'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, s.step_length, s.x, s.y, c :: int || s.stack
-          WHERE  c BETWEEN '0' AND '9'
-            UNION
-          SELECT '🏃', '⚙️', s.grid, s.input, s.output, s.direction, s.step_length, s.x, s.y, s.stack
-          WHERE  c != '@' AND c != '>' AND c != 'v' AND c != '<' AND c != '^' AND c != '?' AND c != '#'
-          AND    c != '_' AND c != '|' AND c != '+' AND c != '-' AND c != '*' AND c != '/' AND c != '%'
-          AND    c != '!' AND c != '`' AND c != '.' AND c != ',' AND c != '&' AND c != '~' AND c != '$'
-          AND    c != ':' AND c != '\' AND c != 'g' AND c != 'p' AND c != '"' AND NOT (c BETWEEN '0' AND '9')) AS _
-        WHERE  s."execution mode" = '⚙️'
-          UNION
-        SELECT '🏃', _.*
-        FROM   (
-          SELECT '⚙️' :: execution_mode, s.grid, s.input, s.output, s.direction, 1, s.x, s.y,s.stack
-          WHERE  c = '"'
-            UNION
-          SELECT '🪡', s.grid, s.input, s.output, s.direction, 1, s.x, s.y, from_str(c) || s.stack
-          WHERE  c != '"') AS _
-        WHERE s."execution mode" = '🪡'
-          UNION
-        SELECT s."next execution mode", null, s.grid, s.input, s.output, s.direction, 1, _.*, s.stack
-        FROM   (
-          SELECT wrap(s.x + s.step_length, w), s.y
-          WHERE  s.direction = '🡺'
-            UNION
-          SELECT s.x, wrap(s.y + s.step_length, h)
-          WHERE  s.direction = '🡻'
-            UNION
-          SELECT wrap(s.x - s.step_length, w), s.y
-          WHERE  s.direction = '🡸'
-            UNION
-          SELECT s.x, wrap(s.y - s.step_length, h)
-          WHERE  s.direction = '🡹') AS _
-        WHERE s."execution mode" = '🏃') AS "next"
-      WHERE  s."execution mode" <> '🏁')
-  SELECT s."execution mode" AS mode,
-         point(s.x, s.y) AS pos,
-         s.direction AS dir,
-         s.stack AS stack,
-         (SELECT string_agg(to_str(c) || (CASE WHEN i % {width} = 0 THEN E'\n' ELSE '' END), '')
-          FROM   unnest(s.grid) WITH ORDINALITY AS _(c,i)) AS grid,
-         array_to_string(s.input , '') AS input,
-         s.output AS output,
-         s.steps AS steps
-  FROM   step AS s;
+                        -- Branching
+                        SELECT '⚙️', current.grid, current.input, current.output, _.*, 1
+                        FROM   (
+                                SELECT current.stack, (array['🡺', '🡻', '🡸', '🡹'])[round(1 + random() * 3)] :: direction
+                                WHERE  symbol = '?'
+                                  UNION ALL
+                                SELECT current.stack[2:], (array['🡸','🡺'])[1+(coalesce(current.stack[1], 0)=0)::int] :: direction
+                                WHERE  symbol = '_'
+                                  UNION ALL
+                                SELECT current.stack[2:], (array['🡹','🡻'])[1+(coalesce(current.stack[1], 0)=0)::int] :: direction
+                                WHERE  symbol = '|'
+                               ) AS _(stack, direction)
+                          UNION ALL
+
+                        -- Arithmetic
+                        SELECT '⚙️', current.grid, current.input, current.output, _.*, current.direction, 1
+                        FROM   (
+                                SELECT (coalesce(current.stack[2], 0) + coalesce(current.stack[1], 0)) || current.stack[3:]
+                                WHERE  symbol = '+'
+                                  UNION ALL
+                                SELECT (coalesce(current.stack[2], 0) - coalesce(current.stack[1], 0)) || current.stack[3:]
+                                WHERE  symbol = '-'
+                                  UNION ALL
+                                SELECT (coalesce(current.stack[2], 0) * coalesce(current.stack[1], 0)) || current.stack[3:]
+                                WHERE  symbol = '*'
+                                  UNION ALL
+                                SELECT (coalesce(current.stack[2], 0) / coalesce(current.stack[1], 0)) || current.stack[3:]
+                                WHERE  symbol = '/'
+                                  UNION ALL
+                                SELECT (coalesce(current.stack[2], 0) % coalesce(current.stack[1], 0)) || current.stack[3:]
+                                WHERE  symbol = '%'
+                                  UNION ALL
+                                SELECT (coalesce(current.stack[1], 0) = 0) :: int || current.stack[2:]
+                                WHERE  symbol = '!'
+                                  UNION ALL
+                                SELECT (coalesce(current.stack[2], 0) > coalesce(current.stack[1], 0)) :: int || current.stack[3:]
+                                WHERE  symbol = '`'
+                               ) AS _(stack)
+                          UNION ALL
+
+                        -- User IO
+                        SELECT '⚙️', current.grid, _.*, current.direction, 1
+                        FROM   (
+                                SELECT current.input, current.output || coalesce(current.stack[1], 0) :: text || ' ', current.stack[2:]
+                                WHERE  symbol = '.'
+                                  UNION ALL
+                                SELECT current.input, current.output || to_str(coalesce(current.stack[1], 0)), current.stack[2:]
+                                WHERE  symbol = ','
+                                  UNION ALL
+                                SELECT current.input[2:], current.output, current.input[1] :: int || current.stack
+                                WHERE  symbol = '&'
+                                  UNION ALL
+                                SELECT current.input[2:], current.output, from_str(current.input[1]) || current.stack
+                                WHERE  symbol = '~'
+                               ) AS _(input, output, stack)
+                          UNION ALL
+
+                        -- Stack Control
+                        SELECT '⚙️', current.grid, current.input, current.output, _.*, current.direction, 1
+                        FROM   (
+                                SELECT current.stack[2:]
+                                WHERE  symbol = '$'
+                                  UNION ALL
+                                SELECT coalesce(current.stack[1], 0) || current.stack
+                                WHERE  symbol = ':'
+                                  UNION ALL
+                                SELECT array[coalesce(current.stack[2], 0), coalesce(current.stack[1], 0)] || current.stack[3:]
+                                WHERE  symbol = '\'
+                               ) AS _(stack)
+                          UNION ALL
+
+                        -- Grid IO
+                        SELECT '⚙️', _.grid, current.input, current.output, _.stack, current.direction, 1
+                        FROM   (
+                                SELECT current.grid, get(current.grid, current.stack[1], current.stack[2]) || current.stack[3:]
+                                WHERE  symbol = 'g'
+                                  UNION ALL
+                                SELECT put(current.grid, current.stack[1], current.stack[2], current.stack[3]), current.stack[4:]
+                                WHERE  symbol = 'p'
+                               ) AS _(grid, stack)
+                          UNION ALL
+
+                        -- String Mode Toggle
+                        SELECT '🪡', current.grid, current.input, current.output, current.stack, current.direction, 1
+                        WHERE  symbol = '"'
+                          UNION ALL
+
+                        -- Numbers
+                        SELECT '⚙️', current.grid, current.input, current.output, symbol :: int || current.stack, current.direction, 1
+                        WHERE  symbol BETWEEN '0' AND '9'
+                          UNION ALL
+
+                        -- Comments
+                        SELECT '⚙️', current.grid, current.input, current.output, current.stack, current.direction, 1
+                        WHERE  symbol != '@'
+                        AND    symbol != '>'
+                        AND    symbol != 'v'
+                        AND    symbol != '<'
+                        AND    symbol != '^'
+                        AND    symbol != '?'
+                        AND    symbol != '#'
+                        AND    symbol != '_'
+                        AND    symbol != '|'
+                        AND    symbol != '+'
+                        AND    symbol != '-'
+                        AND    symbol != '*'
+                        AND    symbol != '/'
+                        AND    symbol != '%'
+                        AND    symbol != '!'
+                        AND    symbol != '`'
+                        AND    symbol != '.'
+                        AND    symbol != ','
+                        AND    symbol != '&'
+                        AND    symbol != '~'
+                        AND    symbol != '$'
+                        AND    symbol != ':'
+                        AND    symbol != '\'
+                        AND    symbol != 'g'
+                        AND    symbol != 'p'
+                        AND    symbol != '"'
+                        AND    NOT (symbol BETWEEN '0' AND '9')
+                       ) AS _(execution_mode, grid, input, output, stack, direction, step_length)
+                WHERE  current.execution_mode = '⚙️'
+                  UNION ALL
+
+                -- String Mode
+                SELECT _.execution_mode, current.grid, current.input, current.output, _.stack, current.direction, 1
+                FROM   (
+                        SELECT '⚙️' :: execution_mode, current.stack
+                        WHERE  symbol = '"'
+                          UNION ALL
+                        SELECT '🪡', from_str(symbol) || current.stack
+                        WHERE  symbol != '"'
+                       ) AS _(execution_mode, stack)
+                WHERE current.execution_mode = '🪡'
+              ) AS "next"(execution_mode, grid, input, output, stack, direction, step_length),
+
+              -- Move
+              LATERAL (
+                SELECT wrap(current.x + next.step_length, {width}), current.y
+                WHERE  next.direction = '🡺'
+                  UNION ALL
+                SELECT current.x, wrap(current.y + next.step_length, {height})
+                WHERE  next.direction = '🡻'
+                  UNION ALL
+                SELECT wrap(current.x - next.step_length, {width}), current.y
+                WHERE  next.direction = '🡸'
+                  UNION ALL
+                SELECT current.x, wrap(current.y - next.step_length, {height})
+                WHERE  next.direction = '🡹'
+              ) AS move(x, y)
+      WHERE  current.execution_mode <> '🏁'
+    )
+  TABLE step;
 """
 
 @dataclass(frozen=True)
@@ -259,14 +328,15 @@ class Point:
 
 @dataclass(frozen=True)
 class State:
-    mode: str
-    pos: Point
-    dir: str
-    stack: list[int]
-    grid: str
-    input: str
+    execution_mode: str
+    grid: list[list[int]]
+    input: list[str]
     output: str
-    steps: int
+    stack: list[int]
+    direction: str
+    x : int
+    y : int
+    steps : int
 
 
 @contextmanager
@@ -302,19 +372,17 @@ CLEAR_LINE = "\033[K"
 def render_state(program: Program, state: State, colors: dict[Style, str]) -> str:
     out: str = ""
     special: dict[Point, int] = {}
-    padded_width = program.width + 1  # include newline!
 
-    for y in range(program.height):
-        for x in range(program.width):
-            idx = y * padded_width + x
-            symbol = state.grid[idx]
+    for y, line in enumerate(state.grid):
+        for x, ordinal in enumerate(line):
+            symbol = chr(ordinal)
             out += "\033[" + colors.get(Style.BACKGROUND, Style.BACKGROUND) + "m"
 
             if 32 > ord(symbol) or ord(symbol) > 126:
-                special[Point(x, y)] = ord(symbol)
+                special[Point(x, y)] = ordinal
                 symbol = "▢"
 
-            if x == state.pos.x - 1 and y == state.pos.y - 1:
+            if x == state.x - 1 and y == state.y - 1:
                 out += "\033[" + colors.get(Style.CURSOR, Style.CURSOR) + "m"
             else:
                 style: Style
@@ -347,8 +415,8 @@ def render_state(program: Program, state: State, colors: dict[Style, str]) -> st
             out += symbol + "\033[0m"
         out += "\n"
 
-    out += f"\033[1mMode:\033[0m {state.mode}\n"
-    out += f"\033[1mDirection:\033[0m {state.dir}\n"
+    out += f"\033[1mMode:\033[0m {state.execution_mode}\n"
+    out += f"\033[1mDirection:\033[0m {state.direction}\n"
     out += f"\033[1mSteps:\033[0m {state.steps}\n"
 
     out += "\033[1mNon-Printable Values:\033[0m\n"
@@ -365,6 +433,12 @@ def render_state(program: Program, state: State, colors: dict[Style, str]) -> st
         out += "\033[2m | \033[0m".join(f"{entry:_>4d}" for entry in state.stack) + CLEAR_LINE
     else:
         out += "\033[2m∅\033[0m" + CLEAR_LINE
+
+    out += f"\n\033[1mInput\033[0m:{CLEAR_LINE}\n"
+    if state.input:
+        out += "\033[2m | \033[0m".join(state.input) + CLEAR_LINE
+    else:
+        out += "\033[2m...\033[0m" + CLEAR_LINE
 
     out += f"\n\033[1mOutput\033[0m:{CLEAR_LINE}\n"
     if state.output:

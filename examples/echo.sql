@@ -2,5 +2,6 @@
 
 SELECT * FROM befunge(
   '~:!#@_,',
-  inp := string_to_array('hello there!', NULL),
-  width := 9, height := 1);
+  width := 9, height := 1
+  input := string_to_array('hello there!', NULL),
+);

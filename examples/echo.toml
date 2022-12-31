@@ -1,0 +1,5 @@
+source = '~:!#@_,'
+width = 9
+height = 1
+input = ['h', 'e', 'l', 'l', 'o', ' ', 't', 'h', 'e', 'r', 'e', '!']
+name = "Echo"

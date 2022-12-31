@@ -23,4 +23,5 @@ SELECT * FROM befunge(
   E'v         "GOOD: Funge-93 spaces"+55<               >"arw :DAB">:#,_@ v"skips"< \n' ||
   E'v "BAD: SGML spaces in Funge-93"+55_^#$\\`"  !"_,#! #:<"UNDEF: edge # "<  "hits"<\n' ||
   E'>:#,_55+"...gnittiuQ"55+".enod si etius tset ygolocyM eht fo noisrev 39-egnufe"v\n' ||
-  E'@,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,"The B"<');
+  E'@,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,"The B"<'
+);

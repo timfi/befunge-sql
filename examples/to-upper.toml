@@ -1,0 +1,8 @@
+source = '''
+v,              <         <       <
+>~:!#@_:"a"1-`!#^_:"z"1+`#^_"aA"--^
+'''
+width = 35
+height = 2
+input = ['l', 'o', 'w', 'e', 'r', 'c', 'a', 's', 'e']
+name = "Convert to Uppercase"

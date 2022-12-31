@@ -6,5 +6,5 @@ SELECT * FROM befunge(
   '^<$,   <       :<   -6-7<       ' || E'\n' ||
   '^,<+5+8<_v#`"`"<                ' || E'\n' ||
   '#^_    ^ >:"Z"`#^_:"M"`#^_:"@"`!',
-  inp := string_to_array('hello world', NULL),
+  input := string_to_array('hello world', NULL),
   width := 32, height := 5);
