@@ -199,7 +199,7 @@
     {*}{{{\color{arithmetic}*}}}1
     {/}{{{\color{arithmetic}/}}}1
     {\%}{{{\color{arithmetic}\%{}}}}1
-    {!}{{{\color{arithmetic}!}}}1
+    {\!}{{{\color{arithmetic}!}}}1
     {\`}{{{\color{arithmetic}\`{}}}}1
     {:}{{{\color{stack}:}}}1
     {\\}{{{\color{stack}\textbackslash}}}1
@@ -320,7 +320,7 @@
         \befunge{_|}                          & Vertical and horizontal branching              \\
         \befunge{0123456789}                  & Put number on stack                            \\
         \befunge{:\$\\} & Stack modification                             \\
-        \befunge{+-*/\%}                      & Arithmetic operators                           \\
+        \befunge{+-*/\%\!}                    & Arithmetic operators                           \\
         \befunge{.,}                          & Output either numeric or ASCII value to stdout \\
         \befunge{\&~}                         & Take either numeric or ASCII value from stdin  \\
         \befunge{gp}                          & Get or put ASCII value from the grid           \\
@@ -636,7 +636,7 @@
             \node[codeKeyword,draw=codeKeyword,fill=codeKeyword!25]    at (0,1.2) (check) {$\emptyset$?};
             \node[codeConstant!25,draw=codeConstant,fill=codeConstant] at (0,2.4) (step)  {\texttt{↺}};
           \end{scope}
-          \coordinate (through) at (-0.7,2.8);
+          \coordinate (through) at (-0.7,2.9);
           %% transitions (through check)
           \begin{scope}[goto/.tip={Latex[round,length=2mm]},return/.tip={Latex[round,length=2mm] Bar}]
             \draw[{goto}-]   (start) to +(0,-1.0);
@@ -690,16 +690,16 @@
           };
           \begin{pgfonlayer}{background}
             \begin{scope}[rounded corners=2pt]
-              \fill[codebg]                                          (-5.5, -1.00) rectangle (36.0, 20.00);
+              \fill[codebg]                                          (-5.5, -1.00) rectangle (36.5, 20.00);
 
-              \fill[codeConstant,draw=codeConstant,line width=1.7pt] (-4.0, -0.00) rectangle (34.5, 19.20);
-              \fill[codeConstant!25]                                 (-2.5, -0.00) rectangle (34.5, 19.20);
+              \fill[codeConstant,draw=codeConstant,line width=1.7pt] (-4.0, -0.00) rectangle (35.0, 19.20);
+              \fill[codeConstant!25]                                 (-2.5, -0.00) rectangle (35.0, 19.20);
 
-              \fill[codeString,draw=codeString,line width=1.7pt]     (-2.0,  2.60) rectangle (33.5,  8.20);
-              \fill[codeString!25]                                   (-0.5,  2.60) rectangle (33.5,  8.20);
+              \fill[codeString,draw=codeString,line width=1.7pt]     (-2.0,  2.60) rectangle (34.0,  8.20);
+              \fill[codeString!25]                                   (-0.5,  2.60) rectangle (34.0,  8.20);
 
-              \fill[codeString,draw=codeString,line width=1.7pt]     (-2.0,  8.70) rectangle (33.5, 18.60);
-              \fill[codeString!25]                                   (-0.5,  8.70) rectangle (33.5, 18.60);
+              \fill[codeString,draw=codeString,line width=1.7pt]     (-2.0,  8.70) rectangle (34.0, 18.60);
+              \fill[codeString!25]                                   (-0.5,  8.70) rectangle (34.0, 18.60);
 
               \fill[codeOperator,draw=codeOperator,line width=1.7pt] ( 8.5,  3.85) rectangle (13.0,  4.85);
               \fill[codeOperator!25]                                 (10.0,  3.85) rectangle (13.0,  4.85);
