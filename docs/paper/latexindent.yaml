@@ -1,0 +1,8 @@
+verbatimCommands:
+  befunge: 1
+modifyLineBreaks:
+  textWrapOptions:
+    columns: 80
+lookForAlignDelims:
+  tabular:
+      multiColumnGrouping: 1
